@@ -1,0 +1,223 @@
+<code><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom font and layout for the console feel */
+        body {
+            font-family: 'Inter', monospace;
+        }
+        
+        /* Style for the ASCII output container */
+        #ascii-output {
+            white-space: pre; /* Essential for preserving the ASCII grid layout */
+            font-size: 10px; 
+            line-height: 1; /* Tight line spacing */
+            color: #ffa100; /* Emerald green for a cyber aesthetic */
+            /* background-color: #000; /* Dark gray background */ */
+            text-shadow: 0 0 5px rgba(16, 185, 129, 0.4); /* Subtle glow */
+            border-radius: 8px;
+            padding: 16px;
+            overflow: hidden;
+            /* Ensure the element can scale but maintains aspect ratio */
+            min-width: 320px;
+        }
+    </style>
+</head>
+      
+
+        <!-- Cube Output Area -->
+        <div class="flex justify-center">
+            <pre id="ascii-output">Initializing...</pre>
+        </div>
+        
+    </div>
+
+    <!-- JavaScript for the Cube Animation -->
+    <script>
+        // Wrap the entire script in an IIFE to prevent global variable conflicts
+        (function() {
+            // --- Configuration ---
+            const SCREEN_WIDTH = 60;
+            const SCREEN_HEIGHT = 40;
+            const CUBE_SIZE = 10;
+            const DISTANCE_Z = 24; // Distance from viewer to screen
+            const CHAR = '='; // Character for drawing lines and vertices
+            const STEP_SIZE = 0.005; // Line interpolation step size
+
+            // --- State ---
+            let angleX = 0;
+            let angleY = 0;
+            let angleZ = 0;
+            const outputElement = document.getElementById('ascii-output');
+
+            // --- Cube Structure: Vertices (x, y, z) and Edges ---
+            const cubeVertices = [
+                // Front face (F)
+                [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE], // 0: FBL (Front Bottom Left)
+                [ CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE], // 1: FBR
+                [ CUBE_SIZE,  CUBE_SIZE, CUBE_SIZE], // 2: FTR
+                [-CUBE_SIZE,  CUBE_SIZE, CUBE_SIZE], // 3: FTL
+                // Back face (B)
+                [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE], // 4: BBL
+                [ CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE], // 5: BBR
+                [ CUBE_SIZE,  CUBE_SIZE, -CUBE_SIZE], // 6: BTR
+                [-CUBE_SIZE,  CUBE_SIZE, -CUBE_SIZE]  // 7: BTL
+            ];
+
+            const cubeEdges = [
+                // Front face edges
+                [0, 1], [1, 2], [2, 3], [3, 0],
+                // Back face edges
+                [4, 5], [5, 6], [6, 7], [7, 4], 
+                // Connecting edges
+                [0, 4], [1, 5], [2, 6], [3, 7]
+            ];
+
+            // --- 3D Matrix Rotation Functions ---
+            function rotateX(p, angle) {
+                const sinA = Math.sin(angle);
+                const cosA = Math.cos(angle);
+                const y = p[1];
+                const z = p[2];
+                p[1] = y * cosA - z * sinA;
+                p[2] = z * cosA + y * sinA;
+            }
+
+            function rotateY(p, angle) {
+                const sinA = Math.sin(angle);
+                const cosA = Math.cos(angle);
+                const x = p[0];
+                const z = p[2];
+                p[0] = x * cosA - z * sinA;
+                p[2] = z * cosA + x * sinA;
+            }
+            
+            function rotateZ(p, angle) {
+                const sinA = Math.sin(angle);
+                const cosA = Math.cos(angle);
+                const x = p[0];
+                const y = p[1];
+                p[0] = x * cosA - y * sinA;
+                p[1] = y * cosA + x * sinA;
+            }
+
+
+            /**
+             * Projects a 3D point (x, y, z) to 2D screen coordinates (X, Y).
+             */
+            function project(vertex) {
+                // Perspective projection: Px = x / (z/D) where D is a constant.
+                // Here, z is adjusted by DISTANCE_Z
+                const perspective = 1 / (DISTANCE_Z + vertex[2]);
+                
+                // Scale factor to map coordinates to screen size
+                const scale = 15; 
+
+                const X = Math.floor(SCREEN_WIDTH / 2 + vertex[0] * perspective * scale);
+                const Y = Math.floor(SCREEN_HEIGHT / 2 - vertex[1] * perspective * scale); // Invert Y axis
+                
+                return { X, Y };
+            }
+
+            /**
+             * Draws a line between two projected points (p1, p2) in the output buffer.
+             * Uses simple linear interpolation (DDA-like) for robustness.
+             */
+            function drawLine(p1, p2, buffer) {
+                let dx = p2.X - p1.X;
+                let dy = p2.Y - p1.Y;
+                let steps = Math.max(Math.abs(dx), Math.abs(dy));
+
+                if (steps === 0) {
+                    // Draw single vertex if no movement
+                    setPixel(p1.X, p1.Y, CHAR, buffer);
+                    return;
+                }
+
+                // Calculate step increments for x and y
+                const xIncrement = dx / steps;
+                const yIncrement = dy / steps;
+
+                let currentX = p1.X;
+                let currentY = p1.Y;
+
+                // Loop through all steps to draw the line
+                for (let i = 0; i <= steps; i++) {
+                    setPixel(Math.round(currentX), Math.round(currentY), CHAR, buffer);
+                    currentX += xIncrement;
+                    currentY += yIncrement;
+                }
+            }
+            
+            /**
+             * Safely sets a character in the output buffer if coordinates are in bounds.
+             */
+            function setPixel(x, y, char, buffer) {
+                if (x >= 0 && x < SCREEN_WIDTH && y >= 0 && y < SCREEN_HEIGHT) {
+                    const index = x + y * SCREEN_WIDTH;
+                    buffer[index] = char;
+                }
+            }
+
+
+            /**
+             * Renders one frame of the rotating cube.
+             */
+            function renderCubeFrame() {
+                // Initialize the output buffer with spaces
+                const output = new Array(SCREEN_WIDTH * SCREEN_HEIGHT).fill(' ');
+    
+                // 1. Calculate rotated and projected vertices
+                const projectedVertices = [];
+                
+                cubeVertices.forEach(v => {
+                    // Deep copy the vertex to avoid modifying the original array
+                    let p = [...v]; 
+                    
+                    // Apply rotation matrices for X, Y, and Z
+                    rotateX(p, angleX);
+                    rotateY(p, angleY);
+                    rotateZ(p, angleZ);
+                    
+                    // Project the rotated 3D point to 2D screen coordinates
+                    projectedVertices.push(project(p));
+                });
+                
+                // 2. Draw Edges
+                cubeEdges.forEach(edge => {
+                    const p1 = projectedVertices[edge[0]];
+                    const p2 = projectedVertices[edge[1]];
+                    
+                    drawLine(p1, p2, output);
+                });
+    
+                // 3. Convert buffer to string and render
+                let frame = "";
+                for (let i = 0; i < output.length; i++) {
+                    frame += output[i];
+                    if ((i + 1) % SCREEN_WIDTH === 0) {
+                        frame += '\n'; // Add newline after each row
+                    }
+                }
+                outputElement.textContent = frame;
+    
+                // 4. Update rotation angles for the next frame
+                angleX += 0.01;
+                angleY += 0.015;
+                angleZ += 0.005;
+            }
+    
+            // --- Initialization ---
+            outputElement.style.width = `${SCREEN_WIDTH}ch`; 
+            outputElement.style.height = `${SCREEN_HEIGHT}em`; 
+
+            window.onload = function () {
+                setInterval(renderCubeFrame, 5); 
+            }
+        })(); 
+    </script>
+</body>
+</html></code>
