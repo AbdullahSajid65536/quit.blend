@@ -1,0 +1,471 @@
+<code><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blender Fight thingy - CLI Style</title>
+    <style>
+        /* Custom styles for an ASCII/Terminal feel */
+        body {
+            font-family: 'Courier New', monospace;
+
+            color: #ffa100; 
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+
+        .game-window {
+            width: 100%;
+            max-width: 800px;
+            border: 2px solid #ffa100;
+            padding: 1rem;
+        }
+
+        .header, .combatant-panel, .log-panel, .action-panel {
+            margin-bottom: 1.5rem;
+            padding: 0.5rem 0;
+            border-bottom: 1px dashed #00ff0050;
+        }
+
+        /* Health Bar Container Style (Text-based box) */
+        .health-bar-ascii {
+            border: 1px solid #ffa100;
+            padding: 1px;
+            display: inline-block;
+            min-width: 250px;
+        }
+
+        /* Health Bar Fill (ASCII characters) */
+        .boss-hp-fill { color: #ff0000; }
+        .player-hp-fill { color: #00ff00; } 
+        .low-hp { color: #ffff00; }
+
+        .action-button {
+            background-color: #003300;
+            border: 1px solid #ffa100;
+            color: #ffcc00;
+            padding: 0.5rem 1rem;
+            margin-right: 0.5rem;
+            cursor: pointer;
+            transition: background-color 0.1s;
+            font-family: 'Courier New', monospace;
+            text-transform: uppercase;
+        }
+
+        .action-button:hover:not(:disabled) {
+            background-color: #ffff00;
+            color: #000000;
+        }
+
+        .action-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #combat-log {
+            height: 150px;
+            overflow-y: auto;
+            border: 1px solid #ffa100;
+            padding: 0.5rem;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        /* Log Colors */
+        .log-player { color: #00ffff; }
+        .log-boss { color: #ff0000; }
+        .log-system { color: #ffff00; font-weight: bold; }
+        .log-default { color: #ffa100; }
+
+        /* Modal for Game Over (Kept hidden as an overlay in this version) */
+        #game-over-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            color: #ffa100; /* Ensure text is visible on overlay */
+            font-size: 1.5rem;
+        }
+        
+        /* Utility to clear floats/flex */
+        .clearfix::after {
+            content: "";
+            clear: both;
+            display: table;
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- Main Game Container -->
+    <div class="game-window">
+        <div class="header">
+            <h1 style="text-align: center; font-size: 1.5rem;">[ quit.blend ]</h1>
+        </div>
+
+        <!-- Combatants Display -->
+        <div class="combatant-panel clearfix">
+            <!-- Boss Stats -->
+            <div id="boss-stats">
+                <p>--- View Layer ---</p>
+                <p id="boss-name-text">????Cube.001 ▣</p>
+                <p>Verts:</p>
+                <div id="boss-hp-display" class="clearfix">
+                    <!-- Boss HP will be rendered here -->
+                </div>
+            </div>
+
+            <hr style="border-top: 1px dashed #00ff0050; margin: 1rem 0;">
+
+            <!-- Player Stats -->
+            <div id="player-stats">
+                <p>~abdullahsajid/userinst1</p>
+                <p id="player-name-text">Nvidia Geforce GT 620M</p>
+                <p>GPU Load:</p>
+                <div id="player-hp-display" class="clearfix">
+                    <!-- Player HP will be rendered here -->
+                </div>
+                <p>VRAM Available: <span id="potion-count">512</span> MB</p>
+            </div>
+        </div>
+
+        <!-- Combat Log -->
+        <div class="log-panel">
+            <p>[ CONSOLE LOG ]</p>
+            <div id="combat-log">
+                <p class="log-system">>>>[Scene.001]: bpy.data: ???? Object could not be constructed from vertex buffer.</p>
+            </div>
+        </div>
+
+        <!-- Action Menu -->
+        <div class="action-panel">
+            <p>[ ACTIONS ]</p>
+            <button id="btn-attack" class="action-button">Decimate</button>
+            <button id="btn-potion" class="action-button">Recompute</button>
+            <button id="btn-remesh" class="action-button">Remesh</button>
+            <button id="btn-restart" class="action-button" style="display: none;">Restart Game</button>
+<button id="btn-delete" class="action-button" style="display: none;">DELETE THIS TRASH</button>
+
+        </div>
+    </div>
+
+    <!-- Simple Game Over Message Overlay (used instead of the old model) -->
+    <div id="game-over-overlay">
+        <p>XXXX</p>
+        <p id="redirection-message"></p>
+    </div>
+
+    <script>
+        // --- GAME STATE VARIABLES ---
+	let turndelay = 500;
+
+        let player = {
+            name: "/userinst1",
+            maxHp: 100,
+            currentHp: 0,
+            attackMin: 64,
+            attackMax: 128,
+            critrarity: 10,
+            critmultiplier: 5,
+            potions: 512,
+            potionHeal: 48
+        };
+
+        let boss = {
+            name: "????",
+            maxHp: 65536,
+            currentHp: 65536,
+            attackMin: 4,
+            attackMax: 32,
+            isTurn: false,
+            difficultyMultiplier: 1,
+            phasetwothreshold: 8192,
+            resetcounter: 0,
+            resetlimit: 5 
+        };
+
+        let isGameOver = false;
+
+        // --- DOM REFERENCES ---
+        const log = document.getElementById('combat-log');
+        const bossHpDisplay = document.getElementById('boss-hp-display');
+        const playerHpDisplay = document.getElementById('player-hp-display');
+        const potionCountSpan = document.getElementById('potion-count');
+        const btnAttack = document.getElementById('btn-attack');
+        const btnPotion = document.getElementById('btn-potion');
+        const btnRemesh = document.getElementById('btn-remesh');
+        const btnRestart = document.getElementById('btn-restart');
+        const gameOverOverlay = document.getElementById('game-over-overlay');
+        const redirectionMessage = document.getElementById('redirection-message');
+
+        const BAR_LENGTH = 32; // Length of the ASCII health bar
+
+        // --- UTILITY FUNCTIONS ---
+
+        /** Generates a random integer between min and max (inclusive). */
+        function randomDamage(min, max) {
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
+
+        /** Generates an ASCII health bar string. */
+        function renderHealthBar(current, max, colorClass) {
+            const ratio = current / max;
+            const filledLength = Math.round(ratio * BAR_LENGTH);
+            const emptyLength = BAR_LENGTH - filledLength;
+
+            const filledBar = '#'.repeat(filledLength);
+            const emptyBar = ' '.repeat(emptyLength);
+
+            const hpText = `${current} / ${max}`;
+            
+            // Check for low HP status
+            const statusClass = (ratio > 0.6) ? 'low-hp' : colorClass;
+
+            return `<span class="health-bar-ascii">[<span class="${statusClass}">${filledBar}</span>${emptyBar}]</span> ${hpText}`;
+        }
+
+        /** Updates the visual display of the player's health bar and text. */
+        function updatePlayerUI() {
+            const barHTML = renderHealthBar(player.currentHp, player.maxHp, 'player-hp-fill');
+            playerHpDisplay.innerHTML = barHTML;
+            potionCountSpan.textContent = player.potions;
+
+            // Re-check button state every time player UI updates
+            btnPotion.disabled = player.potions <= 0 || boss.isTurn;
+            btnRemesh.disabled = player.potions < 48 || boss.isTurn;
+        }
+
+        /** Updates the visual display of the boss's health bar and text. */
+        function updateBossUI() {
+            const barHTML = renderHealthBar(boss.currentHp, boss.maxHp, 'boss-hp-fill');
+            bossHpDisplay.innerHTML = barHTML;
+        }
+
+        /** Adds a message to the combat log. */
+        function addLog(message, type = 'default') {
+            const p = document.createElement('p');
+            p.textContent = `> ${message}`;
+
+            // Apply specific styles based on message type
+            if (type === 'player') {
+                p.classList.add('log-player');
+            } else if (type === 'boss') {
+                p.classList.add('log-boss');
+            } else if (type === 'system') {
+                p.classList.add('log-system');
+            } else {
+                p.classList.add('log-default');
+            }
+
+            log.prepend(p); // Add to the top of the log
+            // Keep log size manageable (e.g., max 20 entries)
+            if (log.children.length > 20) {
+                log.removeChild(log.lastChild);
+            }
+        }
+
+        /** Disables/enables action buttons during boss turn or game over. */
+        function toggleActions(enabled) {
+            btnAttack.disabled = !enabled;
+            btnPotion.disabled = !enabled || player.potions <= 0;
+            btnRemesh.disabled = !enabled || player.potions < 48;
+            boss.isTurn = !enabled;
+        }
+
+        // --- GAME LOGIC ---
+
+        /** Player attacks the boss. */
+        function playerAttack() {
+            if (isGameOver || boss.isTurn) return;
+
+            toggleActions(false); // Disable actions
+
+            const roll = randomDamage(0,player.critrarity);
+            const damage = randomDamage(player.attackMin, player.attackMax);
+
+            if(roll==1){
+            boss.currentHp = Math.max(0, boss.currentHp - damage*player.critmultiplier);
+
+            updateBossUI();
+            addLog(`[Scene.001]: bpy.context: Decimate found optimal unsubdivision path. Removed ${damage*player.critmultiplier} verts successfully!`, 'system');
+            }
+            else{
+            boss.currentHp = Math.max(0, boss.currentHp - damage);
+
+            updateBossUI();
+            addLog(`${player.name} removed ${damage} verts successfully!`, 'player');
+	    }
+
+            if (checkGameStatus()) return;
+
+            // Initiate boss's turn after a short delay
+            setTimeout(bossTurn, turndelay);
+        }
+
+        /** Player uses a potion to heal. */
+        function playerUsePotion() {
+            if (isGameOver || boss.isTurn || player.potions <= 0) return;
+
+            toggleActions(false); // Disable actions
+
+            player.potions--;
+            const healAmount = player.potionHeal;
+            const newHp = Math.max(0, player.currentHp - healAmount);
+            const actualHeal = newHp - player.currentHp;
+            player.currentHp = newHp;
+
+            updatePlayerUI();
+            addLog(`${player.name} requested recompute of base mesh. GPU resources freed.`, 'player');
+
+            if (checkGameStatus()) return;
+
+            // Initiate boss's turn after a short delay
+            setTimeout(bossTurn, turndelay);
+        }
+
+        function playerRemesh() {
+            if (isGameOver || boss.isTurn || player.potions < 48) return;
+            toggleActions(false);
+
+            player.potions=player.potions-48;
+            const newhp = randomDamage(Math.round(boss.currentHp/2),boss.currentHp);
+            boss.currentHp = newhp;            
+
+            updateBossUI();
+            updatePlayerUI();
+            addLog(`[Scene.001]: bpy.ops: ${boss.name} was reconstructed using Quadriflow Remesh. New vertex count ${boss.currentHp}`,'system');
+            setTimeout(bossTurn, turndelay);
+        }
+
+        /** Boss attacks the player. */
+        function bossTurn() {
+            if (isGameOver) return;
+
+            const roll = randomDamage(0,100);  //rand value for events
+
+            const baseDamage = randomDamage(boss.attackMin, boss.attackMax);
+            const damage = Math.round(baseDamage * boss.difficultyMultiplier);
+
+            /*phase 2 attacks*/
+            if(boss.currentHp<=boss.phasetwothreshold){
+                addLog(`[Scene.001]: bpydata: ${boss.name} is a corrupted data block. Proceed with caution.`,'system');
+                if(roll == 7 && boss.resetcounter<boss.resetlimit){  //rare event where game state resets
+                boss.resetcounter++;
+                boss.currentHp = 65536;
+                player.potions = 512;
+                player.currentHp = 64;
+                updatePlayerUI();
+                updateBossUI();
+                addLog(`[Scene.001]: bpy.data: quit.blend was corrupted, failed to free GPU resources. Reverting to previous save.`,'system');}
+                else if(roll>75){
+                addLog(`[Scene.001]: bpy.context: Double draw calls detected.`,'system');
+                player.currentHp = Math.min(100, player.currentHp + damage);
+                updatePlayerUI();
+                addLog(`${boss.name} inflicts ${damage * 512} draw calls on the GPU!`, 'boss');
+                }
+            }
+            
+
+            player.currentHp = Math.min(100, player.currentHp + damage);
+
+            updatePlayerUI();
+            addLog(`${boss.name} inflicts ${damage * 512} draw calls on the GPU!`, 'boss');
+
+            checkGameStatus();
+
+            if (!isGameOver) {
+                // Re-enable actions for player's next turn
+                toggleActions(true);
+            }
+        }
+
+        /** Checks if the game has ended (Win or Loss). */
+        function checkGameStatus() {
+            if (player.currentHp >= 100 || player.potions == 0) {
+                endGame(false); // Loss
+                return true;
+            } else if (boss.currentHp <= 0) {
+                endGame(true); // Win
+                return true;
+            }
+            return false;
+        }
+
+        /** Displays the end game redirection and provides a restart option. */
+        function endGame(playerWon) {
+            isGameOver = true;
+            toggleActions(false);
+           btnRestart.style.display = 'inline-block'; // Show restart button
+
+            // Hide the overlay since we are opening a new window initially
+            gameOverOverlay.style.display = 'none';
+
+            let targetUrl;
+            let message;
+            
+            if (playerWon) {
+                // Open new window on Win
+                targetUrl = 'https://www.youtube.com/watch?v=SDeVyxtdSUk';
+                message = `[Scene.001]: bpy.ops: Deleted 1 Object(s)`;
+                redirectionMessage.textContent = `Great Enemy Felled`;
+            } else {
+                // Open new window on Loss
+                targetUrl = 'https://abdullahsajid.net/coding-projects';
+                message = `>>[Scene.001]: log: ERROR CUDA OUT OF MEMORY. System is out of GPU Memory. Returning to /root.`;
+                redirectionMessage.textContent = `Cube.001: L BOZO`;
+            }
+
+            addLog(message, 'system');
+            
+            // Use setTimeout to allow the log message to render before the action is taken
+            setTimeout(() => {
+                // Open the URL in a new window/tab
+                const newWindow = window.open(targetUrl, '_blank');
+
+                // Check if the new window was successfully opened (not blocked by popup blocker)
+                if (!newWindow || newWindow.closed || typeof newWindow.closed == 'undefined') {
+                    // If blocked, show the overlay message to inform the user
+                    addLog(`~abdullahsajid/sys: Pop-up blocked! Check your browser settings.`, 'system');
+                } else {
+                    addLog(`~abdullahsajid/sys: New window opened successfully.`, 'system');
+                }
+
+                // Show overlay with message/restart option on the main window
+                gameOverOverlay.style.display = 'flex';
+            }, 500);
+        }
+
+        /** Resets the game by reloading the page. */
+        function restartGame() {
+            window.location.reload();
+        }
+
+        // --- INITIALIZATION ---
+
+        // Event Listeners
+        btnAttack.addEventListener('click', playerAttack);
+        btnPotion.addEventListener('click', playerUsePotion);
+        btnRemesh.addEventListener('click',playerRemesh);
+        btnRestart.addEventListener('click', restartGame);
+
+        // Initial UI setup on load
+        window.onload = () => {
+            updatePlayerUI();
+            updateBossUI();
+            toggleActions(true);
+        };
+
+    </script>
+</body>
+</html></code>
